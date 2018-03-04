@@ -127,39 +127,20 @@ endfunction
 " FUNCTION: s:Creator.createMirror() {{{1
 function! s:Creator.createMirror()
     "get the names off all the nerd tree buffers
-    let treeBufNames = []
-    for i in range(1, tabpagenr("$"))
-        let nextName = self._tabpagevar(i, 'NERDTreeBufName')
-        if nextName != -1 && (!exists("t:NERDTreeBufName") || nextName != t:NERDTreeBufName)
-            call add(treeBufNames, nextName)
-        endif
-    endfor
-    let treeBufNames = self._uniq(treeBufNames)
-
-    "map the option names (that the user will be prompted with) to the nerd
-    "tree buffer names
-    let options = {}
-    let i = 0
-    while i < len(treeBufNames)
-        let bufName = treeBufNames[i]
-        let treeRoot = getbufvar(bufName, "NERDTree").root
-        let options[i+1 . '. ' . treeRoot.path.str() . '  (buf name: ' . bufName . ')'] = bufName
-        let i = i + 1
-    endwhile
+    let excludeName = -1
+    if exists("t:NERDTreeBufName")
+        let excludeName = t:NERDTreeBufName
+    endif
+    let treeBufNames = self._getAllTabNerdTreeNames(excludeName)
 
     "work out which tree to mirror, if there is more than 1 then ask the user
-    let bufferName = ''
-    if len(keys(options)) > 1
-        let choices = ["Choose a tree to mirror"]
-        let choices = extend(choices, sort(keys(options)))
-        let choice = inputlist(choices)
-        if choice < 1 || choice > len(options) || choice ==# ''
+    if len(treeBufNames) > 1
+        let bufferName = self._selectNerdTreeBuffer("Choose a tree to mirror", treeBufNames)
+        if bufferName == -1
             return
         endif
-
-        let bufferName = options[sort(keys(options))[choice-1]]
-    elseif len(keys(options)) ==# 1
-        let bufferName = values(options)[0]
+    elseif len(treeBufNames) ==# 1
+        let bufferName = treeBufNames[0]
     else
         call nerdtree#echo("No trees to mirror")
         return
@@ -336,19 +317,22 @@ function! s:Creator._tabpagevar(tabnr, var)
 endfunction
 
 " FUNCTION: s:Creator.ToggleTabTree(dir) {{{1
-function! s:Creator.ToggleTabTree(dir)
+function! s:Creator.ToggleTabTree(dir, mirrorIfPossible)
     let creator = s:Creator.New()
-    call creator.toggleTabTree(a:dir)
+    call creator.toggleTabTree(a:dir, a:mirrorIfPossible)
 endfunction
 
-" FUNCTION: s:Creator.toggleTabTree(dir) {{{1
+" FUNCTION: s:Creator.toggleTabTree(dir, mirrorIfPossible) {{{1
 " Toggles the NERD tree. I.e the NERD tree is open, it is closed, if it is
 " closed it is restored or initialized (if it doesnt exist)
 "
 " Args:
 " dir: the full path for the root node (is only used if the NERD tree is being
 " initialized.
-function! s:Creator.toggleTabTree(dir)
+" mirrorIfPossible: if this is true, when the current tab does not have a NERD
+" tree and some other tab(s) has one, it will mirror it just like command
+" :NERDTreeMirror.
+function! s:Creator.toggleTabTree(dir, mirrorIfPossible)
     if g:NERDTree.ExistsForTab()
         if !g:NERDTree.IsOpen()
             call self._createTreeWin()
@@ -360,6 +344,26 @@ function! s:Creator.toggleTabTree(dir)
             call g:NERDTree.Close()
         endif
     else
+        if a:mirrorIfPossible
+            let treeBufNames = self._getAllTabNerdTreeNames("")
+            if len(treeBufNames) >= 1
+                if len(treeBufNames) == 1
+                    let bufferName = treeBufNames[0]
+                else
+                    let bufferName = self._selectNerdTreeBuffer("Choose a tree to mirror", treeBufNames)
+                    if bufferName == -1
+                        return
+                    endif
+                endif
+                let t:NERDTreeBufName = bufferName
+                call self._createTreeWin()
+                exec 'buffer ' . bufferName
+                if !&hidden
+                    call b:NERDTree.render()
+                endif
+                return
+            endif
+        endif
         call self.createTabTree(a:dir)
     endif
 endfunction
@@ -374,6 +378,39 @@ function! s:Creator._uniq(list)
     endif
   endfor
   return uniqlist
+endfunction
+
+" Function: s:Creator._getAllTabNerdTreeNames(exclude)   {{{1
+" if exclude != "", it specifies a buffer name that should be excluded
+" maybe make the function name clearer
+function! s:Creator._getAllTabNerdTreeNames(exclude)
+    let treeBufNames = []
+    for i in range(1, tabpagenr("$"))
+        let nextName = self._tabpagevar(i, 'NERDTreeBufName')
+        if nextName != -1 && (a:exclude == "" || nextName != a:exclude)
+            call add(treeBufNames, nextName)
+        endif
+    endfor
+    return self._uniq(treeBufNames)
+endfunction
+
+" Function: s:Creator._selectNerdTreeBuffer(prompt, bufferNames)   {{{1
+" ask user to select a nerd tree buffer from a:bufferNames. Return -1 if
+" nothing is selected; otherwise, return the buffer name
+function! s:Creator._selectNerdTreeBuffer(prompt, bufferNames)
+    let choices = [a:prompt]
+    let i = 0
+    while i < len(a:bufferNames)
+        let bufName = a:bufferNames[i]
+        let treeRoot = getbufvar(bufName, "NERDTree").root
+        call add(choices, i+1 . '. ' . treeRoot.path.str() . '  (buf name: ' . bufName . ')')
+        let i = i + 1
+    endwhile
+    let choice = inputlist(choices)
+    if choice < 1 || choice >= len(choices) || choice ==# ''
+        return -1
+    endif
+    return a:bufferNames[choice-1]
 endfunction
 
 " vim: set sw=4 sts=4 et fdm=marker:
